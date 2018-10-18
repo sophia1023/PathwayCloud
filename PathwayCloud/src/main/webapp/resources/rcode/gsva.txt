@@ -1,0 +1,80 @@
+nGS <- 314
+
+library(GSVA)
+
+args	=	commandArgs( trailingOnly=TRUE )
+if (length(args)==0) {
+	stop( "Arguments must be provided.\n", call.=FALSE )
+}
+
+sTCGADirectory  <-  '/data/project/TCGA/'
+sPathwayDB      <-  '/data/project/sslim/PriorInfo/KEGG_Pathway_20170306.gmt'								
+sCancerType     <-  as.character(args[1])																	
+
+sSampleInfo     <-  paste(sTCGADirectory, sCancerType, '/Clinical/', sCancerType, '_summary.txt', sep="")
+sRNASeqFile     <-  paste(sTCGADirectory, sCancerType, '/RNASeqV2/', sCancerType, '_RNASeqV2.gct', sep="")	
+
+sOutDir			<-  paste(sTCGADirectory, sCancerType, '/PathwayActivation/',sep="")
+dir.create(sOutDir)
+sGSVAmaxOutFile	<-  paste(sTCGADirectory, sCancerType, '/PathwayActivation/GSVAmax.csv', sep="")		
+sGSVAdifOutFile	<-	paste(sTCGADirectory, sCancerType, '/PathwayActivation/GSVAdif.csv', sep="")		
+sssGSEAOutFile	<-	paste(sTCGADirectory, sCancerType, '/PathwayActivation/ssGSEA.csv', sep="")			
+sPLAGEOutFile	<-	paste(sTCGADirectory, sCancerType, '/PathwayActivation/PLAGE.csv', sep="")			
+sZscoreOutFile	<-	paste(sTCGADirectory, sCancerType, '/PathwayActivation/Zscore.csv', sep="")			
+
+library(qusage)
+gs.data <- read.gmt(sPathwayDB)
+
+expr.data	<- read.table(sRNASeqFile,head=TRUE)
+X			<- as.matrix(expr.data[,3:ncol(expr.data)])
+rownames(X) <- expr.data[,2]
+clin.data			<-	read.csv( sSampleInfo, head=TRUE, sep="\t" )
+rownames(clin.data)	<-	clin.data[,1]
+clin.data			<-	clin.data[,-1]
+tumor.sample		<-  rownames(clin.data)[clin.data[,1]=="Tumor"]
+normal.sample		<-  rownames(clin.data)[clin.data[,1]=="Normal"]
+
+printres			<-	function(datamat) {
+
+	my.t.test.p.value	<-	function(v1,v2) {
+	obj <- try(t.test(v1,v2,twosided=TRUE), silent = TRUE)
+	if (is(obj, "try-error")) return(NA) else return(obj$p.value)
+	}
+
+	sample_matrix		<-	matrix(0, nrow(datamat), 2)
+	for (i in 1:nrow(datamat) ) {
+	sample_matrix[i,1]	<-	rownames(datamat)[i]
+	temp.normal			<- datamat[i, match(normal.sample, colnames(datamat)) ]
+	temp.tumor			<- datamat[i, match(tumor.sample, colnames(datamat)) ]
+
+	pval				<- my.t.test.p.value(temp.normal,temp.tumor)
+	sample_matrix[i,2]	<-	as.numeric( pval )
+	}
+	fdr						<-	p.adjust( sample_matrix[,2] )
+	final_result			<-	cbind(sample_matrix, fdr)
+	colnames(final_result)	<-	c("pathway","pvalue","qvalue")
+	print( final_result[ which(final_result[,3] < 0.05), ] )
+}	# Enf of printres
+
+
+es.max <- gsva(X, gs.data, mx.diff=FALSE, verbose=FALSE, rnaseq=TRUE)$es.obs
+colnames(es.max)	<-	gsub(".","-",colnames(es.max), fixed=TRUE)
+print( paste("GSVA - max result for ", sCancerType, sep="") )
+printres(es.max)
+
+
+es.dif <- gsva(X, gs.data, mx.diff=TRUE, verbose=FALSE, rnaseq=TRUE)$es.obs
+print( paste("GSVA - dif result for ", sCancerType, sep="") )
+printres(es.dif)
+
+es.ssGSEA <- gsva(X, gs.data, method="ssgsea", verbose=FALSE, rnaseq=TRUE)
+print( paste("ssGSEA result for ", sCancerType, sep="") )
+printres(es.ssGSEA)
+
+es.plage <- gsva(X, gs.data, method="plage", verbose=FALSE)
+print( paste("PLAGE result for ", sCancerType, sep="") )
+printres(es.plage)
+
+es.zscore <- gsva(X, gs.data, method="zscore", verbose=FALSE)
+print( paste("z-score result for ", sCancerType, sep="") )
+printres(es.zscore)
